@@ -51,7 +51,7 @@ general.add_argument('-ec', '--encoder_codec', default='mp4v', metavar='STR',
                      help='encoder codec code')
 
 detection = base_parser.add_argument_group('detection')
-detection.add_argument('-dm', '--detection_model', metavar='PATH', default='weights/WIDERFace_DSFD_RES152.pth',
+detection.add_argument('-dm', '--detection_model', metavar='PATH', default='../../weights/WIDERFace_DSFD_RES152.pth',
                        help='path to face detection model')
 detection.add_argument('-db', '--det_batch_size', default=4, type=int, metavar='N',
                        help='detection batch size')

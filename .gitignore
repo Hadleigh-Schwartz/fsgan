@@ -1,4 +1,5 @@
-.idea
+*.idea
+*.pth
 *.pyc
 __pycache__
 fsgan/experiments/results

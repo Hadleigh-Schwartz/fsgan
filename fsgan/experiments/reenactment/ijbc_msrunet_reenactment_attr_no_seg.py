@@ -15,10 +15,14 @@ from fsgan.train_reenactment_attr_no_seg import main
 if __name__ == '__main__':
     exp_name = os.path.splitext(os.path.basename(__file__))[0]
     exp_dir = os.path.join('../results/reenactment', exp_name)
-    train_dataset = partial(VideoSeqPairDataset, '/data/datasets/ijb-c/ijbc_cropped/ijbc_cropped_r256_cs1.2',
-                            'train_list.txt', frame_window=1, ignore_landmarks=True, same_prob=1.0)
-    val_dataset = partial(VideoSeqPairDataset, '/data/datasets/ijb-c/ijbc_cropped/ijbc_cropped_r256_cs1.2',
-                          'val_list.txt', frame_window=1, ignore_landmarks=True, same_prob=1.0)
+    # train_dataset = partial(VideoSeqPairDataset, '/data/datasets/ijb-c/ijbc_cropped/ijbc_cropped_r256_cs1.2',
+    #                         'train_list.txt', frame_window=1, ignore_landmarks=True, same_prob=1.0)
+    # val_dataset = partial(VideoSeqPairDataset, '/data/datasets/ijb-c/ijbc_cropped/ijbc_cropped_r256_cs1.2',
+    #                       'val_list.txt', frame_window=1, ignore_landmarks=True, same_prob=1.0)
+    train_dataset = partial(VideoSeqPairDataset, r"C:\Users\mobil\Desktop\verilight_attacks\CVPR2022-DaGAN\video-preprocessing\vox\train",
+                            'train_list.txt', frame_window=1, ignore_landmarks=True, same_prob=0.0)
+    val_dataset = partial(VideoSeqPairDataset, r"C:\Users\mobil\Desktop\verilight_attacks\CVPR2022-DaGAN\video-preprocessing\vox\train",
+                          'val_list.txt', frame_window=1, ignore_landmarks=True, same_prob=0.0)
     numpy_transforms = [RandomHorizontalFlip(), Pyramids(2)]
     tensor_transforms = [ToTensor()]
     resolutions = [128, 256]
@@ -36,7 +40,8 @@ if __name__ == '__main__':
     discriminator = MultiscaleDiscriminator(use_sigmoid=True, num_D=2)
     optimizer = partial(optim.Adam, betas=(0.5, 0.999))
     scheduler = partial(lr_scheduler.StepLR, step_size=10, gamma=0.5)
-    lms_model = '../../weights/hr18_wflw_landmarks.pth'
+    # lms_model = '../../weights/hr18_wflw_landmarks.pth'
+    lms_model = r"C:\Users\mobil\Desktop\verilight_attacks\fsgan\weights\hr18_wflw_landmarks.pth"
     rec_weight = 1.0
     gan_weight = 0.001
 

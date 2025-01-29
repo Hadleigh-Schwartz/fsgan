@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.parallel
 import torch.utils as tutils
 import torch.nn.functional as F
+from torchvision.transforms.functional import resize as torch_resize
 import numpy as np
 import cv2
 from tqdm import tqdm
@@ -14,6 +15,20 @@ from fsgan.utils import utils, img_utils, landmarks_utils
 from fsgan.datasets import img_landmarks_transforms
 from fsgan.models.hrnet import hrnet_wlfw
 
+import sys
+sys.path.append(r'C:\Users\mobil\Desktop\verilight_attacks\arcface-pytorch\config')
+from config import Config
+from torch.nn import DataParallel
+sys.path.append(r'C:\Users\mobil\Desktop\verilight_attacks\arcface-pytorch\models')
+from resnet import *
+
+
+def load_arcface_model(model, model_path):
+    model_dict = model.state_dict()
+    pretrained_dict = torch.load(model_path)
+    pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+    model_dict.update(pretrained_dict)
+    model.load_state_dict(model_dict)
 
 def transfer_mask(img1, img2, mask):
     mask = mask.unsqueeze(1).repeat(1, 3, 1, 1).float()
@@ -21,7 +36,26 @@ def transfer_mask(img1, img2, mask):
 
     return out
 
+def cosin_metric(x1, x2):
+    return np.dot(x1, x2) / (np.linalg.norm(x1) * np.linalg.norm(x2))
 
+class EarlyStopper:
+    def __init__(self, patience=1, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = float('inf')
+
+    def early_stop(self, validation_loss):
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
+    
 def blend_imgs_bgr(source_img, target_img, mask):
     a = np.where(mask != 0)
     if len(a[0]) == 0 or len(a[1]) == 0:
@@ -63,7 +97,7 @@ def main(
     criterion_attr='vgg_loss.VGGLoss', criterion_gan='gan_loss.GANLoss(use_lsgan=True)',
     generator='res_unet.MultiScaleResUNet(in_nc=7,out_nc=3)',
     discriminator='discriminators_pix2pix.MultiscaleDiscriminator',
-    reenactment_model=None, seg_model=None, lms_model=None, pix_weight=0.1, rec_weight=1.0, gan_weight=0.001,
+    reenactment_model=None, seg_model=None, lms_model=None, pix_weight=0.1, rec_weight=1.0, gan_weight=0.001, verilight_weight=1,
     background_value=-1.0
 ):
     def proces_epoch(dataset_loader, train=True):
@@ -84,13 +118,21 @@ def main(
 
         # For each batch in the training data
         for i, (img, target) in enumerate(pbar):
+            source_imgs = img[0][1].clone()
             # Prepare input
             with torch.no_grad():
                 # For each view images
+                original_tensors = []
                 for j in range(len(img)):
+                    batch_original = []
                     # For each pyramid image: push to device
                     for p in range(len(img[j])):
+                        batch_original.append(img[j][p].clone())  # Save the original tensor
                         img[j][p] = img[j][p].to(device)
+    
+
+                    original_tensors.append(batch_original)
+  
 
                 # Compute context
                 context = L(img[1][0].sub(context_mean).div(context_std))
@@ -156,7 +198,29 @@ def main(
             loss_attr = criterion_attr(img_blend_pred, img_blend)
             loss_rec = pix_weight * loss_pixelwise + 0.5 * loss_id + 0.5 * loss_attr
 
-            loss_G_total = rec_weight * loss_rec + gan_weight * loss_G_GAN
+            # arcface: distance between generated image and the original image 
+            # print("hello", torch.max(img_blend_pred), torch.min(img_blend_pred), img_blend_pred.shape)
+            img_blend_pred_bw = img_blend_pred.clone()          
+            img_blend_pred_bw = img_blend_pred_bw.mean(dim=1, keepdim=True)  # Take the mean across the channel dimension
+            img_blend_pred_bw_resized = torch_resize(img_blend_pred_bw, (128, 128))
+            feature_img_blend_pred = arc_model(img_blend_pred_bw_resized)
+
+            source_imgs = source_imgs - 0.5
+            source_imgs = source_imgs / 0.5
+            source_imgs = source_imgs.mean(dim=1, keepdim=True)
+            # resize to 128x128 for arcface
+            source_imgs_resized = torch_resize(source_imgs, (128, 128))
+            feature_src = arc_model(source_imgs_resized)
+
+            # compute the agngle between the source image and the generated image embeddings along the batch dimension
+            feature_img_blend_pred = feature_img_blend_pred / torch.norm(feature_img_blend_pred, dim=1, keepdim=True)
+            feature_src = feature_src / torch.norm(feature_src, dim=1, keepdim=True)
+            cos_sims = F.cosine_similarity(feature_src, feature_img_blend_pred, dim=1)
+            thetas = torch.acos(cos_sims)
+            loss_verilight = torch.mean(thetas)
+
+            # Total Loss
+            loss_G_total = rec_weight * loss_rec + gan_weight * loss_G_GAN + verilight_weight * loss_verilight
 
             if train:
                 # Update generator weights
@@ -169,8 +233,9 @@ def main(
                 loss_D_total.backward()
                 optimizer_D.step()
 
-            logger.update('losses', pixelwise=loss_pixelwise, id=loss_id, attr=loss_attr, rec=loss_rec,
+            logger.update('losses', loss_G_total = loss_G_total, verilight=loss_verilight, pixelwise=loss_pixelwise, id=loss_id, attr=loss_attr, rec=loss_rec,
                           g_gan=loss_G_GAN, d_gan=loss_D_total)
+            
             total_iter += dataset_loader.batch_size
 
             # Batch logs
@@ -185,7 +250,7 @@ def main(
             grid = img_utils.make_grid(img[0][0], reenactment_img, img_transfer, img_blend_pred, img_blend, img[1][0])
             logger.log_image('%dx%d/vis' % (res, res), grid, epoch)
 
-        return logger.log_dict['losses']['rec'].avg
+        return logger.log_dict['losses']['rec'].avg, loss_G_total
 
     #################
     # Main pipeline #
@@ -266,10 +331,15 @@ def main(
             optimizer_D_state = checkpoint['optimizer']
     else:
         print("=> no checkpoint found at '{}'".format(checkpoint_dir))
-        if not pretrained:
-            print("=> randomly initializing networks...")
-            Gb.apply(utils.init_weights)
-            D.apply(utils.init_weights)
+        # if not pretrained:
+        print("=> randomly initializing networks...")
+        Gb_ckpt_path = '../../../weights/ijbc_msrunet_256_1_2_blending_v2.pth'
+        Gb_ckpt = torch.load(Gb_ckpt_path)
+        Gb.apply(utils.init_weights)
+        Gb.load_state_dict(Gb_ckpt['state_dict'], strict=False)
+        # optimizer_G_state = Gb_ckpt['optimizer']
+        print("=> loaded checkpoint from '{}'".format(Gb_ckpt_path))
+        D.apply(utils.init_weights)
 
     # Load reenactment model
     print('=> Loading face reenactment model: "' + os.path.basename(reenactment_model) + '"...')
@@ -296,7 +366,21 @@ def main(
     assert os.path.isfile(lms_model), 'The model path "%s" does not exist' % lms_model
     L = hrnet_wlfw().to(device)
     state_dict = torch.load(lms_model)
-    L.load_state_dict(state_dict)
+    L.load_state_dict(state_dict['state_dict'])
+
+    #  Load the arcface model
+    arc_opt = Config()
+    if arc_opt.backbone == 'resnet18':
+        model = resnet_face18(arc_opt.use_se)
+    elif arc_opt.backbone == 'resnet34':
+        model = resnet34()
+    elif arc_opt.backbone == 'resnet50':
+        model = resnet50()
+
+    arc_model = DataParallel(model)
+    arc_model.load_state_dict(torch.load(arc_opt.test_model_path))
+    arc_model.to(torch.device(device))
+    arc_model.eval()
 
     # Initialize normalization tensors
     # Note: this is necessary because of the landmarks model
@@ -362,12 +446,16 @@ def main(
         else:
             val_loader = None
 
+        early_stopper = EarlyStopper(patience=3, min_delta=0.008)
         # For each epoch
         for epoch in range(start_epoch, res_epochs):
-            total_loss = proces_epoch(train_loader, train=True)
+            total_loss, loss_g = proces_epoch(train_loader, train=True)
             if val_loader is not None:
                 with torch.no_grad():
-                    total_loss = proces_epoch(val_loader, train=False)
+                    total_loss, loss_g = proces_epoch(val_loader, train=False)
+                # if early_stopper.early_stop(loss_g): 
+                #     print('Early stopping')            
+                #     break
 
             # Schedulers step (in PyTorch 1.1.0+ it must follow after the epoch training and validation steps)
             if isinstance(scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
@@ -473,6 +561,8 @@ if __name__ == "__main__":
                         help='reconstruction loss weight')
     parser.add_argument('-gw', '--gan_weight', default=0.001, type=float, metavar='F',
                         help='GAN loss weight')
+    parser.add_argument('-aw', '--adv_weight', default=0.001, type=float, metavar='F',
+                        help='VeriLight adversarial weight')
     parser.add_argument('-bv', '--background_value', default=-1.0, type=float, metavar='F',
                         help='removed background replacement value')
 
@@ -493,5 +583,6 @@ if __name__ == "__main__":
         criterion_attr=args.criterion_attr, criterion_gan=args.criterion_gan, generator=args.generator,
         discriminator=args.discriminator, reenactment_model=args.reenactment_model, seg_model=args.seg_model,
         lms_model=args.lms_model, pix_weight=args.pix_weight, rec_weight=args.rec_weight, gan_weight=args.gan_weight,
+        verilight_weight=args.adv_weight,
         background_value=args.background_value
     )

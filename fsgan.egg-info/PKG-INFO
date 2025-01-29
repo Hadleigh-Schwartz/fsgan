@@ -1,0 +1,9 @@
+Metadata-Version: 2.1
+Name: fsgan
+Version: 1.0.1
+Summary: FSGAN: Subject Agnostic Face Swapping and Reenactment
+Author: Dr. Yuval Nirkin
+Author-email: yuval.nirkin@gmail.com
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+License-File: LICENSE

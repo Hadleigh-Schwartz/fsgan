@@ -9,36 +9,42 @@ from fsgan.criterions.vgg_loss import VGGLoss
 from fsgan.criterions.gan_loss import GANLoss
 from fsgan.models.res_unet import MultiScaleResUNet
 from fsgan.models.discriminators_pix2pix import MultiscaleDiscriminator
-from fsgan.train_blending import main
+
+import sys
+sys.path.append(r"C:\Users\mobil\Desktop\verilight_attacks\fsgan\fsgan")
+from train_blending import main
 
 
 if __name__ == '__main__':
     exp_name = os.path.splitext(os.path.basename(__file__))[0]
     exp_dir = os.path.join('../results/swapping', exp_name)
-    train_dataset = partial(VideoSeqPairDataset, '/data/datasets/ijb-c/ijbc_cropped/ijbc_cropped_r256_cs1.2',
+    train_dataset = partial(VideoSeqPairDataset, r"C:\Users\mobil\Desktop\verilight_attacks\CVPR2022-DaGAN\video-preprocessing\vox\train",
                             'train_list.txt', frame_window=1, ignore_landmarks=True, same_prob=0.0)
-    val_dataset = partial(VideoSeqPairDataset, '/data/datasets/ijb-c/ijbc_cropped/ijbc_cropped_r256_cs1.2',
+    val_dataset = partial(VideoSeqPairDataset, r"C:\Users\mobil\Desktop\verilight_attacks\CVPR2022-DaGAN\video-preprocessing\vox\train",
                           'val_list.txt', frame_window=1, ignore_landmarks=True, same_prob=0.0)
     numpy_transforms = [RandomHorizontalFlip(), Pyramids(2)]
     tensor_transforms = [ToTensor()]
     resolutions = [128, 256]
     lr_gen = [1e-4, 4e-5]
     lr_dis = [1e-5, 4e-6]
-    epochs = [24, 50]
-    iterations = ['20k']
-    batch_size = [32, 16]
-    workers = 32
-    pretrained = False
+    epochs = [20, 20]#[24, 50]
+    iterations = ['3k']
+    batch_size = [2, 2]
+    workers = 12
+    pretrained = True
     criterion_id = VGGLoss('../../../weights/vggface2_vgg19_256_1_2_id.pth')
     criterion_attr = VGGLoss('../../../weights/celeba_vgg19_256_2_0_28_attr.pth')
     criterion_gan = GANLoss(use_lsgan=True)
-    generator = MultiScaleResUNet(in_nc=7, out_nc=3, flat_layers=(2, 2, 2, 2), ngf=128)
+    generator = MultiScaleResUNet(in_nc=7, out_nc=3, flat_layers=(2, 2, 2, 2), ngf=256)
     discriminator = MultiscaleDiscriminator(use_sigmoid=True, num_D=2)
     optimizer = partial(optim.Adam, betas=(0.5, 0.999))
     scheduler = partial(lr_scheduler.StepLR, step_size=10, gamma=0.5)
-    reenactment_model = '../results/reenactment/ijbc_msrunet_reenactment_attr_no_seg/G_latest.pth'
-    seg_model = '../../weights/lfw_figaro_unet_256_segmentation.pth'
-    lms_model = '../../weights/hr18_wflw_landmarks.pth'
+    # reenactment_model = '../results/reenactment/ijbc_msrunet_reenactment_attr_no_seg/G_latest.pth'
+    reenactment_model = r"C:\Users\mobil\Desktop\verilight_attacks\fsgan\weights\nfv_msrunet_256_1_2_reenactment_v2.1.pth"
+    # seg_model = '../../weights/lfw_figaro_unet_256_segmentation.pth'
+    # lms_model = '../../weights/hr18_wflw_landmarks.pth'
+    seg_model = r"C:\Users\mobil\Desktop\verilight_attacks\fsgan\weights\celeba_unet_256_1_2_segmentation_v2.pth"
+    lms_model = r"C:\Users\mobil\Desktop\verilight_attacks\fsgan\weights\hr18_wflw_landmarks.pth"
     rec_weight = 1.0
     gan_weight = 0.1
     background_value = -1.0
